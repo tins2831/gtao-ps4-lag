@@ -23,6 +23,7 @@ $ ls /sys/class/net
 $ sudo ./gtao-ps4-lag INTERFACE
 v>> Press any key to begin or Ctrl + C to exit.
 ```
+Tip: you can get yourself into a solo public lobby by letting the lag switch run until everyone disconnects.
 
 ### Options
 ```
