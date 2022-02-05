@@ -11,7 +11,7 @@ Lag switch for Grand Theft Auto: Online on PS4. It blocks all outbound (by defau
 ### Setup
 To begin, you should create a hotspot on your linux system. [linux-router](https://github.com/garywill/linux-router) allows you to easily create one.
 
-Press q at the prompt or Ctrl + C to exit.
+Press q at the prompt or Ctrl + C to exit. To stop the lag switch, press any key. To restart the lag switch, press any key after it's been stopped and the prompt is displayed (`v>> `).
 ```
 $ git clone https://github.com/tins2831/gtao-ps4-lag.git
 $ cd gtao-ps4-lag
