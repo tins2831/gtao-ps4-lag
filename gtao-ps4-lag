@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+import argparse
+import atexit
+import fcntl
+import os
+import re
+import signal
+import sys
+import termios
+import threading
+import time
+
+from _private import netimpair_mod as netimpair
+
+_base_dir = os.path.dirname(__file__)
+
+_excluded_ports_raw = [
+    22, 80, 443, 465, 993,
+    3478, 3479, 3480, 5223,
+    8080, 3478, 3479
+]
+_included_ports_raw = [
+    6672, 61456
+]
+
+def format_ports(port_list, src_port = True):
+    ports = []
+
+    for port in port_list:
+        ports.append('dport=%d' % port)
+
+        if src_port:
+            ports.append('sport=%d' % port)
+
+    return ports
+
+pause_ev = threading.Event()
+stop_ev = threading.Event()
+start_ev = threading.Event()
+def netimpair_func(netimpair_args = None):
+    start_ev.set()
+
+    while not stop_ev.wait(0.2):
+        if start_ev.is_set():
+            netimpair.main(netimpair_args)
+
+        # release after teardown() has been called.
+        while not pause_ev.wait(0.2):
+            pass
+
+def main(args):
+    netimpair_args = netimpair.parse_args([
+        '-n', args.interface,
+        'netem',
+        '--loss_ratio', '%d' % args.amount,
+        '--loss_corr', '100' # don't selectively drop packets
+    ])
+
+    netimpair.log_file = open(os.path.join(_base_dir, 
+        '_private' + os.sep + 'netimpair.log'), 'w')
+    netimpair.netem = netimpair.NetemInstance(
+        netimpair_args.nic,
+        netimpair_args.inbound,
+        format_ports(_included_ports_raw, False),
+        format_ports(_excluded_ports_raw)
+    )
+
+    # wait until user is ready
+    getch('v>> Press any key to begin or Ctrl + C to exit.')
+    print('\nv>> Lagging...', end = '')
+
+    # precautionary sleep to allow the OS to do any bg
+    # stuff.
+    time.sleep(0.3)
+
+    def _on_exit(signum, stack_frame):
+        stop_ev.set()
+        pause_ev.set()
+
+        if start_ev.is_set():
+            start_ev.clear()
+            netimpair.netem.teardown()
+
+            netimpair_thrd.join()
+
+        print("\nv>> GTAO-PS4-Lag exiting...")
+
+        # precautionary sleep to allow the OS to do any bg
+        # stuff.
+        time.sleep(1)
+
+        if signum is not None: # call exit if signal was caught.
+            atexit.unregister(_on_exit)
+
+            sys.exit(0)
+
+    atexit.register(_on_exit, None, None)
+    for sig in [signal.SIGINT, signal.SIGTERM]:
+        signal.signal(sig, _on_exit)
+
+    # initiate the thread in which netimpair will run on.
+    netimpair_thrd = threading.Thread(target = netimpair_func,
+        kwargs = {'netimpair_args': netimpair_args})
+
+    netimpair_thrd.name = 'Netimpair - PS4-Lag'
+    netimpair_thrd.start()
+
+    # REPL
+    while True:
+        if not netimpair.prompt_ready.wait(0.2):
+            continue
+
+        # write any buffered data to the log
+        netimpair.log_file.flush()
+        os.fsync(netimpair.log_file)
+
+        command_raw = getch('\nv>> ')
+
+        sys.stdout.write(command_raw)
+        sys.stdout.flush()
+
+        if command_raw.lower() == 'q':
+            _on_exit(0x10000, None)
+
+        if pause_ev.is_set():
+            print("\nv>> Lagging...", end = '')
+
+            # precautionary sleep to allow the OS to do any bg
+            # stuff.
+            time.sleep(0.5)
+
+            start_ev.set()
+            pause_ev.clear()
+        else:
+            print("\nv>> Stopping lag...", end = '')
+
+            netimpair.prompt_ready.clear()
+            netimpair.netem.teardown()
+            start_ev.clear()
+            pause_ev.set()
+
+            # precautionary sleep to allow the OS to do any bg
+            # stuff.
+            time.sleep(1)
+
+            print('\nv>> Stopped.', end = '')
+            netimpair.prompt_ready.set()
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog = 'sudo ./gtao-ps4-lag',
+        description = 'Lag switch for Grand Theft Auto: Online on PS4.',
+        epilog = 'https://github.com/tins2831/gtao-ps4-lag'
+    )
+
+    parser.add_argument(
+        '--amount',
+        help = 'Amount of packet loss to induce. Defaults to 90.',
+        type = int,
+        metavar = 'VALUE',
+        default = 90
+    )
+
+    parser.add_argument(
+        '-i', '--inbound',
+        help = 'Drop inbound packets instead. Outbound packets are dropped ' +
+               'by default.',
+        action = 'store_true',
+        default = False
+    )
+
+    parser.add_argument(
+        'interface',
+        help = 'Network interface to target.',
+        type = str,
+        metavar = 'INTERFACE'
+    )
+
+    return parser.parse_args()
+
+# https://stackoverflow.com/a/7259460
+def getch(message):
+    fd = sys.stdin.fileno()
+
+    sys.stdout.write(message)
+    sys.stdout.flush()
+
+    oldterm = termios.tcgetattr(fd)
+    newattr = termios.tcgetattr(fd)
+    newattr[3] = newattr[3] & ~termios.ICANON & ~termios.ECHO
+    termios.tcsetattr(fd, termios.TCSANOW, newattr)
+
+    oldflags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, oldflags)
+
+    try:        
+        while 1:            
+          try:
+            c = sys.stdin.read(1)
+            break
+          except IOError: pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSAFLUSH, oldterm)
+    fcntl.fcntl(fd, fcntl.F_SETFL, oldflags)
+    return c
+
+main(parse_args())
